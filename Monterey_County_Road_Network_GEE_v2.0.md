@@ -1,4 +1,10 @@
-# Monterey County Road Network — Google Earth Engine
+# Monterey County Road Network in Google Earth Engine
+
+## Project Overview
+
+This project creates a clean road network map for Monterey County, California using Google Earth Engine (GEE). The goal is to show the roads that are useful at a county and city scale without displaying every road in the county.
+
+The final map separates roads into U.S. highways, state highways, major arterial roads, urban city streets, and optional county roads. A light gray basemap is used so the road colors are easier to see.
 
 ## Project Information
 
@@ -6,890 +12,361 @@
 - **Platform:** Google Earth Engine (GEE)
 - **Author:** Teo Espero
 - **Date Created:** September 7, 2026
-- **Version:** 2.0
-
-## Google Earth Engine Code
-
-```javascript
-/***************************************************************
- * PROJECT: Monterey County Road Network
- * PLATFORM: Google Earth Engine (GEE)
- *
- * AUTHOR: Teo Espero
- * DATE CREATED: September 7, 2026
- * VERSION: 2.0
- *
- * PURPOSE:
- * Create a clean transportation map of Monterey County showing:
- *
- *   - U.S. Highways
- *   - State Highways
- *   - Major arterial roads
- *   - Local/city streets in developed urban areas
- *   - County roads as an optional layer
- *   - Monterey County boundary
- *
- * The GHSL urban mask is used only behind the scenes.
- * It is NOT displayed on the map.
- *
- * Because the mask is supposed to help the map,
- * not become the map.
- *
- * DATA SOURCES:
- *   TIGER/2018/Counties
- *   TIGER/2016/Roads
- *   JRC/GHSL/P2023A/GHS_SMOD_V2-0/2025
- *
- * REVISION HISTORY:
- * -------------------------------------------------------------
- * Version   Date          Author       Description
- * -------------------------------------------------------------
- * 1.0       09/07/2026    Teo Espero   Initial road map
- * 1.3       09/07/2026    Teo Espero   Major routes only
- * 1.7       09/07/2026    Teo Espero   Added city streets
- * 1.8       09/07/2026    Teo Espero   Tested Census urban data
- * 1.9       09/07/2026    Teo Espero   Added GHSL urban mask
- * 2.0       09/07/2026    Teo Espero   Hid urban mask from map
- ***************************************************************/
-
-
-// =============================================================
-// LOAD MONTEREY COUNTY
-// =============================================================
-
-// Start with every county in the United States.
-//
-// We only need Monterey County.
-// The other 3,000+ counties can wait their turn.
-var counties = ee.FeatureCollection(
-  'TIGER/2018/Counties'
-);
-
-
-// Select Monterey County, California.
-//
-// STATEFP 06 = California.
-var monterey = counties
-  .filter(
-    ee.Filter.eq(
-      'NAME',
-      'Monterey'
-    )
-  )
-  .filter(
-    ee.Filter.eq(
-      'STATEFP',
-      '06'
-    )
-  )
-  .first();
-
-
-// Save the county geometry.
-//
-// We use this repeatedly, so giving it a variable is less
-// annoying than asking Earth Engine for it every time.
-var montereyGeometry = monterey.geometry();
-
-
-print(
-  'Monterey County:',
-  monterey
-);
-
-
-// =============================================================
-// LOAD TIGER ROADS
-// =============================================================
-
-// Load the nationwide Census TIGER road network.
-//
-// Important fields:
-//
-// fullname = road name
-// rttyp    = route type
-// mtfcc    = road classification
-// linearid = unique TIGER identifier
-var roads = ee.FeatureCollection(
-  'TIGER/2016/Roads'
-);
-
-
-// Keep only roads intersecting Monterey County.
-//
-// Yes, there are a lot.
-//
-// No, we are still not displaying every residential street
-// from the coast to King City.
-var montereyRoads = roads.filterBounds(
-  montereyGeometry
-);
-
-
-print(
-  'Total Monterey County Road Segments:',
-  montereyRoads.size()
-);
-
-
-// =============================================================
-// U.S. HIGHWAYS
-// =============================================================
-
-// RTTYP U = U.S. Route.
-//
-// US 101 gets the red-carpet treatment.
-var usHighways = montereyRoads.filter(
-  ee.Filter.eq(
-    'rttyp',
-    'U'
-  )
-);
-
-
-// =============================================================
-// STATE HIGHWAYS
-// =============================================================
-
-// RTTYP S = State Route.
-//
-// CA 1, CA 68, CA 156, and whatever else Caltrans
-// decided needed a number.
-var stateHighways = montereyRoads.filter(
-  ee.Filter.eq(
-    'rttyp',
-    'S'
-  )
-);
-
-
-// =============================================================
-// MAJOR ARTERIAL ROADS
-// =============================================================
-
-// S1200 = secondary road / main arterial.
-//
-// These are the larger non-freeway roads that help connect
-// cities and developed areas.
-//
-// U.S. and State highways are removed because they already
-// have their own layers.
-//
-// Drawing the same road twice does not make it more accurate.
-var majorArterials = montereyRoads
-
-  .filter(
-    ee.Filter.eq(
-      'mtfcc',
-      'S1200'
-    )
-  )
-
-  .filter(
-    ee.Filter.neq(
-      'rttyp',
-      'U'
-    )
-  )
-
-  .filter(
-    ee.Filter.neq(
-      'rttyp',
-      'S'
-    )
-  );
-
-
-// =============================================================
-// LOCAL / CITY STREETS
-// =============================================================
-
-// S1400 includes:
-//
-// - city streets
-// - neighborhood roads
-// - rural local roads
-//
-// Showing every S1400 road county-wide would make this
-// look like somebody dropped blue spaghetti on Monterey County.
-var localRoads = montereyRoads.filter(
-  ee.Filter.eq(
-    'mtfcc',
-    'S1400'
-  )
-);
-
-
-// =============================================================
-// LOAD GHSL URBANISATION DATA
-// =============================================================
-
-// GHSL helps us figure out where developed urban areas are.
-//
-// We use this ONLY as a mask.
-//
-// It will NOT be displayed as a layer.
-//
-// It gets to work quietly behind the scenes like a good
-// supporting dataset.
-var settlement = ee.Image(
-  'JRC/GHSL/P2023A/GHS_SMOD_V2-0/2025'
-).select(
-  'smod_code'
-);
-
-
-// GHSL settlement classes:
-//
-// 21 = Suburban / peri-urban
-// 22 = Semi-dense urban cluster
-// 23 = Dense urban cluster
-// 30 = Urban centre
-//
-// Values 21 and higher work well for identifying developed
-// areas where we actually want to see the local street network.
-var urbanMask = settlement
-  .gte(21)
-  .selfMask()
-  .clip(
-    montereyGeometry
-  );
-
-
-// Notice what is NOT here:
-//
-// Map.addLayer(urbanMask ...)
-//
-// That is intentional.
-//
-// No more giant gray blocks photobombing the road network.
-
-
-// =============================================================
-// COUNTY ROADS
-// =============================================================
-
-// RTTYP C = County Route.
-//
-// Useful if you want additional rural detail.
-//
-// Off by default because restraint has finally entered
-// the project.
-var countyRoads = montereyRoads.filter(
-  ee.Filter.eq(
-    'rttyp',
-    'C'
-  )
-);
-
-
-// =============================================================
-// STYLE URBAN CITY STREETS
-// =============================================================
-
-// Draw all S1400 roads first.
-//
-// Then use the GHSL mask to keep them visible only in
-// developed urban areas.
-//
-// The mask itself remains invisible.
-//
-// Exactly as nature intended.
-var urbanCityRoadStyle = localRoads.style({
-
-  color: '64B5F6',
-
-  width: 1
-
-})
-.updateMask(
-  urbanMask
-)
-.clip(
-  montereyGeometry
-);
-
-
-// =============================================================
-// STYLE MAJOR ARTERIALS
-// =============================================================
-
-// Dark blue.
-//
-// More important than regular city streets,
-// less important than highways.
-//
-// Road hierarchy without unnecessary drama.
-var majorArterialStyle = majorArterials.style({
-
-  color: '1565C0',
-
-  width: 3
-
-}).clip(
-  montereyGeometry
-);
-
-
-// =============================================================
-// STYLE COUNTY ROADS
-// =============================================================
-
-// Gold.
-//
-// Available when needed, quiet when not.
-var countyRoadStyle = countyRoads.style({
-
-  color: 'D4A017',
-
-  width: 2
-
-}).clip(
-  montereyGeometry
-);
-
-
-// =============================================================
-// STYLE STATE HIGHWAYS
-// =============================================================
-
-// Orange.
-//
-// Easy to distinguish from both the blue city network
-// and red U.S. highways.
-var stateHighwayStyle = stateHighways.style({
-
-  color: 'FF8C00',
-
-  width: 4
-
-}).clip(
-  montereyGeometry
-);
-
-
-// =============================================================
-// STYLE U.S. HIGHWAYS
-// =============================================================
-
-// Red and thick.
-//
-// US 101 remains convinced this map is about US 101.
-var usHighwayStyle = usHighways.style({
-
-  color: 'D7191C',
-
-  width: 5
-
-}).clip(
-  montereyGeometry
-);
-
-
-// =============================================================
-// STYLE MONTEREY COUNTY BOUNDARY
-// =============================================================
-
-// Dark gray outline.
-//
-// Transparent fill because covering the map with a polygon
-// would technically defeat the purpose of making the map.
-var countyBoundaryStyle =
-  ee.FeatureCollection([monterey]).style({
-
-    color: '4D4D4D',
-
-    fillColor: '00000000',
-
-    width: 3
-
-  });
-
-
-// =============================================================
-// CENTER THE MAP
-// =============================================================
-
-// County-wide starting view.
-//
-// Close enough to understand where things are.
-//
-// Far enough away that we are not inspecting driveways.
-Map.centerObject(
-  monterey,
-  9
-);
-
-
-// =============================================================
-// LIGHT GRAY BASEMAP
-// =============================================================
-
-// Keep the basemap quiet.
-//
-// Our road layers are the subject.
-// Google Maps gets a supporting role.
-var lightGrayStyle = [
-
-  // General land background.
-  {
-    elementType: 'geometry',
-    stylers: [
-      {
-        color: '#E8E8E8'
-      }
-    ]
-  },
-
-
-  // General map labels.
-  {
-    elementType: 'labels.text.fill',
-    stylers: [
-      {
-        color: '#606060'
-      }
-    ]
-  },
-
-
-  // Light halo around labels.
-  {
-    elementType: 'labels.text.stroke',
-    stylers: [
-      {
-        color: '#F5F5F5'
-      }
-    ]
-  },
-
-
-  // Hide Google's built-in road geometry.
-  //
-  // We brought our own road network.
-  //
-  // No need for Google's version standing behind ours
-  // whispering, "but I have roads too."
-  {
-    featureType: 'road',
-    elementType: 'geometry',
-    stylers: [
-      {
-        visibility: 'off'
-      }
-    ]
-  },
-
-
-  // Hide Google's built-in road labels too.
-  //
-  // A road label without our road underneath it would
-  // just create new questions.
-  {
-    featureType: 'road',
-    elementType: 'labels',
-    stylers: [
-      {
-        visibility: 'off'
-      }
-    ]
-  },
-
-
-  // Hide most points of interest.
-  //
-  // This is a transportation map, not Yelp.
-  {
-    featureType: 'poi',
-    stylers: [
-      {
-        visibility: 'off'
-      }
-    ]
-  },
-
-
-  // Transit is useful.
-  //
-  // Just not invited to this particular project.
-  {
-    featureType: 'transit',
-    stylers: [
-      {
-        visibility: 'off'
-      }
-    ]
-  },
-
-
-  // Light blue-gray water.
-  {
-    featureType: 'water',
-    elementType: 'geometry',
-    stylers: [
-      {
-        color: '#C6D8E0'
-      }
-    ]
-  },
-
-
-  // Keep water labels subtle.
-  {
-    featureType: 'water',
-    elementType: 'labels.text.fill',
-    stylers: [
-      {
-        color: '#657A85'
-      }
-    ]
-  },
-
-
-  // Administrative boundaries stay quiet.
-  {
-    featureType: 'administrative',
-    elementType: 'geometry.stroke',
-    stylers: [
-      {
-        color: '#B5B5B5'
-      }
-    ]
-  }
-
-];
-
-
-// Register the custom basemap.
-//
-// "Light Gray" will appear as a basemap option.
-Map.setOptions(
-  'Light Gray',
-  {
-    'Light Gray': lightGrayStyle
-  }
-);
-
-
-// =============================================================
-// ADD URBAN CITY STREETS
-// =============================================================
-
-// Draw smaller streets first.
-//
-// Bigger roads will be added above them.
-Map.addLayer(
-  urbanCityRoadStyle,
-  {},
-  '🩵 Urban City Streets',
-  true
-);
-
-
-// =============================================================
-// ADD MAJOR ARTERIAL ROADS
-// =============================================================
-
-Map.addLayer(
-  majorArterialStyle,
-  {},
-  '🔵 Major Arterial Roads',
-  true
-);
-
-
-// =============================================================
-// ADD COUNTY ROADS
-// =============================================================
-
-// OFF by default.
-//
-// Turn it on if you want additional county-level detail
-// and feel the map has become far too peaceful.
-Map.addLayer(
-  countyRoadStyle,
-  {},
-  '🟡 County Roads',
-  false
-);
-
-
-// =============================================================
-// ADD STATE HIGHWAYS
-// =============================================================
-
-Map.addLayer(
-  stateHighwayStyle,
-  {},
-  '🟠 State Highways',
-  true
-);
-
-
-// =============================================================
-// ADD U.S. HIGHWAYS
-// =============================================================
-
-// Added after the other road layers so it remains on top.
-Map.addLayer(
-  usHighwayStyle,
-  {},
-  '🔴 U.S. Highways',
-  true
-);
-
-
-// =============================================================
-// ADD MONTEREY COUNTY BOUNDARY
-// =============================================================
-
-// County boundary goes last.
-//
-// Geography is generally easier when you know where the
-// geography ends.
-Map.addLayer(
-  countyBoundaryStyle,
-  {},
-  '⚫ Monterey County Boundary',
-  true
-);
-
-
-// =============================================================
-// CHECK ROAD COUNTS
-// =============================================================
-
-// Console checks help us make sure the filters are actually
-// returning roads rather than confidently returning nothing.
-print(
-  'U.S. Highway Segments:',
-  usHighways.size()
-);
-
-
-print(
-  'State Highway Segments:',
-  stateHighways.size()
-);
-
-
-print(
-  'Major Arterial Segments:',
-  majorArterials.size()
-);
-
-
-print(
-  'S1400 Local Road Segments:',
-  localRoads.size()
-);
-
-
-print(
-  'County Road Segments:',
-  countyRoads.size()
-);
-
-
-// =============================================================
-// CHECK ROAD NAMES
-// =============================================================
-
-// Useful for seeing what TIGER actually considers
-// a major arterial.
-print(
-  'Major Arterial Road Names:',
-
-  majorArterials
-    .aggregate_array('fullname')
-    .distinct()
-    .sort()
-);
-
-
-// U.S. highway names.
-print(
-  'U.S. Highway Names:',
-
-  usHighways
-    .aggregate_array('fullname')
-    .distinct()
-    .sort()
-);
-
-
-// State highway names.
-print(
-  'State Highway Names:',
-
-  stateHighways
-    .aggregate_array('fullname')
-    .distinct()
-    .sort()
-);
-
-
-// =============================================================
-// BUILD THE LEGEND
-// =============================================================
-
-// A colorful map without a legend is just asking people
-// to make things up.
-var legend = ui.Panel({
-
-  style: {
-
-    position: 'bottom-left',
-
-    padding: '8px 15px',
-
-    backgroundColor: 'FFFFFFEE'
-
-  }
-
-});
-
-
-// Legend title.
-legend.add(
-
-  ui.Label({
-
-    value: 'Monterey County Road Network',
-
-    style: {
+- **Current Version:** 2.0
 
-      fontWeight: 'bold',
-
-      fontSize: '14px',
-
-      margin: '0 0 8px 0'
+## Main Goals
 
-    }
+The project was designed to:
 
-  })
-
-);
+- Display the Monterey County boundary.
+- Show U.S. and State highways as separate road classes.
+- Show major arterial roads without including every local street.
+- Show smaller city streets mainly in developed urban areas.
+- Keep rural areas from becoming too crowded with local roads.
+- Use a simple color scheme so road types are easy to tell apart.
+- Use a light gray basemap so the road network stands out.
+- Add a legend directly on the map.
 
+## Data Sources
 
-// =============================================================
-// LEGEND HELPER FUNCTION
-// =============================================================
+### TIGER County Boundaries
 
-// Build the legend row once.
-//
-// Let the computer handle the repetitive work.
-//
-// It has fewer complaints.
-function addLegendRow(color, labelText) {
+**Earth Engine dataset:** `TIGER/2018/Counties`
 
+This dataset is used to locate Monterey County and create the county boundary.
 
-  // Colored symbol.
-  var colorBox = ui.Label({
+Monterey County is selected using:
 
-    style: {
+- `NAME = Monterey`
+- `STATEFP = 06`
 
-      backgroundColor: color,
+`06` is the state FIPS code for California.
 
-      padding: '8px',
-
-      margin: '0 0 4px 0'
-
-    }
-
-  });
-
-
-  // Description beside the symbol.
-  var description = ui.Label({
-
-    value: labelText,
-
-    style: {
-
-      margin: '0 0 4px 6px'
-
-    }
-
-  });
-
-
-  // Put symbol and description on the same row.
-  var row = ui.Panel({
-
-    widgets: [
-      colorBox,
-      description
-    ],
-
-    layout: ui.Panel.Layout.Flow(
-      'horizontal'
-    )
-
-  });
-
-
-  legend.add(
-    row
-  );
-
-}
-
-
-// =============================================================
-// ADD LEGEND ITEMS
-// =============================================================
-
-addLegendRow(
-  '#D7191C',
-  'U.S. Highways'
-);
-
-
-addLegendRow(
-  '#FF8C00',
-  'State Highways'
-);
-
-
-addLegendRow(
-  '#1565C0',
-  'Major Arterial Roads'
-);
-
-
-addLegendRow(
-  '#64B5F6',
-  'Urban City Streets'
-);
-
-
-addLegendRow(
-  '#D4A017',
-  'County Roads'
-);
-
-
-// =============================================================
-// ADD LEGEND TO MAP
-// =============================================================
-
-// Turns out legends are more useful when they actually
-// appear on the map.
-Map.add(
-  legend
-);
-
-
-// =============================================================
-// END
-// =============================================================
-
-// The GHSL urban mask still decides where local streets appear,
-// but the mask itself is completely invisible.
-//
-// Roads: visible.
-// Gray urban blocks: gone.
-//
-// Much better.
-```
+### TIGER Road Network
+
+**Earth Engine dataset:** `TIGER/2016/Roads`
+
+This dataset contains the road network used in the project.
+
+Important fields include:
+
+- `fullname` — road name
+- `rttyp` — route type
+- `mtfcc` — road classification
+- `linearid` — unique TIGER road identifier
+
+### GHSL Degree of Urbanisation
+
+**Earth Engine dataset:** `JRC/GHSL/P2023A/GHS_SMOD_V2-0/2025`
+
+GHSL is used as an urban mask. It helps decide where smaller city streets should appear.
+
+The urban mask includes settlement classes:
+
+- `21` — suburban or peri-urban
+- `22` — semi-dense urban cluster
+- `23` — dense urban cluster
+- `30` — urban centre
+
+The mask is used behind the scenes and is not displayed on the final map.
+
+## How the Workflow Works
+
+### Load Monterey County
+
+The script starts by loading the TIGER county dataset.
+
+It then filters the national county layer to Monterey County using the county name and California state FIPS code.
+
+The geometry of Monterey County is saved so it can be reused for filtering and clipping later in the script.
+
+### Filter the Road Dataset
+
+The TIGER road dataset covers the entire United States, so the script first reduces it to roads that intersect Monterey County.
+
+The main function used is:
+
+`filterBounds()`
+
+This keeps road features that touch the Monterey County geometry.
+
+Filtering first is important because it prevents the project from trying to work with the entire national road dataset.
+
+## Road Classification
+
+Roads are separated using the `rttyp` and `mtfcc` fields.
+
+### U.S. Highways
+
+U.S. routes are selected using:
+
+`rttyp = U`
+
+These are displayed in red and use the thickest line width.
+
+US 101 is the main example in Monterey County.
+
+### State Highways
+
+State routes are selected using:
+
+`rttyp = S`
+
+These are displayed in orange.
+
+This group can include routes such as Highway 1, Highway 68, and Highway 156.
+
+### Major Arterial Roads
+
+Major roads are selected using:
+
+`mtfcc = S1200`
+
+This classification represents secondary roads and main arteries.
+
+U.S. and State routes are removed from this group because they already have their own layers. This avoids drawing the same road in multiple colors.
+
+Major arterials are displayed in dark blue.
+
+### Urban City Streets
+
+Local and city streets are selected using:
+
+`mtfcc = S1400`
+
+The problem with `S1400` is that it includes many different kinds of roads, including city streets, neighborhood roads, and rural local roads.
+
+Displaying all `S1400` roads across Monterey County makes the map too crowded.
+
+To solve this, the project uses the GHSL urban mask. Local roads are styled first, then the urban mask is applied so these roads mainly appear in developed areas.
+
+This gives a better view of road networks inside places such as Salinas, Marina, Seaside, and Monterey without filling rural areas with thousands of local roads.
+
+### County Roads
+
+County-recognized routes are selected using:
+
+`rttyp = C`
+
+These roads are included as an optional layer and are turned off by default.
+
+This keeps the map cleaner while still allowing additional road detail when needed.
+
+## Filtering and Clipping
+
+Two important operations are used throughout the project.
+
+### `filterBounds()`
+
+`filterBounds()` is used to reduce the road dataset to features that intersect Monterey County.
+
+This means the script does not need to process roads from the rest of the country.
+
+### `.clip()`
+
+After a road layer is styled, `.clip()` is used to keep the displayed result inside the Monterey County boundary.
+
+This is different from filtering.
+
+- `filterBounds()` decides which road features are included.
+- `.clip()` controls where the final styled image is visible.
+
+Using both gives a cleaner result.
+
+## Using the Urban Mask
+
+The GHSL settlement image is converted into a simple mask by keeping settlement values of `21` or higher.
+
+The process is:
+
+1. Load the GHSL settlement image.
+2. Select the `smod_code` band.
+3. Keep values greater than or equal to `21`.
+4. Use `selfMask()` so non-urban values become transparent.
+5. Clip the mask to Monterey County.
+6. Apply the mask to the local road layer with `updateMask()`.
+
+The GHSL mask itself is not added to the map.
+
+This was important because earlier versions showed the mask as gray blocks, which distracted from the road network. In Version 2.0, the mask still controls where city streets appear, but it remains invisible.
+
+## Styling the Road Network
+
+The `.style()` function is used to control how each road class looks.
+
+The current road symbology is:
+
+| Road Type | Color | Hex | Width |
+|---|---|---|---:|
+| U.S. Highways | Red | `#D7191C` | 5 |
+| State Highways | Orange | `#FF8C00` | 4 |
+| Major Arterial Roads | Dark Blue | `#1565C0` | 3 |
+| Urban City Streets | Light Blue | `#64B5F6` | 1 |
+| County Roads | Gold | `#D4A017` | 2 |
+| Monterey County Boundary | Dark Gray | `#4D4D4D` | 3 |
+
+The line widths are also part of the visual hierarchy. Larger roads are thicker, while smaller city streets are thinner.
+
+## Layer Order
+
+`Map.addLayer()` is used to place each road layer on the map.
+
+The smaller roads are added first, followed by the larger roads.
+
+The order is:
+
+1. Urban city streets
+2. Major arterial roads
+3. County roads
+4. State highways
+5. U.S. highways
+6. Monterey County boundary
+
+This makes sure the larger roads remain visible when different road classes overlap.
+
+County roads are added with their default visibility set to `false`, so they are available in the Layers menu but do not automatically appear.
+
+## Light Gray Basemap
+
+A custom light gray basemap is used instead of satellite imagery.
+
+The goal is to reduce visual clutter and make the road colors easier to see.
+
+The custom basemap:
+
+- Uses a light gray land background.
+- Uses light blue-gray water.
+- Keeps general place labels visible.
+- Hides Google's built-in road lines.
+- Hides Google's road labels.
+- Hides most points of interest.
+- Hides transit details.
+- Keeps administrative boundaries subtle.
+
+Hiding the built-in roads is important because otherwise the Google basemap roads can make it look like roads are missing from the TIGER layers when they are simply being shown by a different source.
+
+## Map Legend
+
+A custom legend is created using GEE's `ui.Panel` and `ui.Label` tools.
+
+The legend shows:
+
+- U.S. Highways
+- State Highways
+- Major Arterial Roads
+- Urban City Streets
+- County Roads
+
+Each legend item uses the same color as its road layer.
+
+The legend is placed in the lower-left corner of the map.
+
+## Console Checks
+
+The script prints several values to the GEE Console for troubleshooting.
+
+These include:
+
+- Total Monterey County road segments
+- U.S. highway segment count
+- State highway segment count
+- Major arterial segment count
+- S1400 local road segment count
+- County road segment count
+- Major arterial road names
+- U.S. highway names
+- State highway names
+
+These checks are useful because a layer that returns zero features will not display, even if the styling code itself is correct.
+
+## Issues Encountered and Fixes
+
+### Too Many Roads
+
+The first versions displayed too many local roads and made the map difficult to read.
+
+**Fix:** Separate highways and major roads from smaller roads, and avoid displaying every local street county-wide.
+
+### Major City Roads Were Missing
+
+Using only `S1200` did not show enough of the road network inside cities.
+
+**Fix:** Add `S1400` roads for city and local streets.
+
+### Local Streets Created Too Much Clutter
+
+Displaying all `S1400` roads also included rural local roads.
+
+**Fix:** Use GHSL settlement data as an urban mask so smaller roads mainly appear in developed areas.
+
+### TIGER Places Dataset Error
+
+An earlier attempt used `TIGER/2018/Places`, which is not available as an Earth Engine asset under that path.
+
+**Fix:** Remove the dependency on that dataset.
+
+### Empty Geometry Error
+
+An earlier Census-block approach produced an empty urban geometry and caused an `Image.clip` error.
+
+**Fix:** Replace the Census block mask with the GHSL raster urban mask.
+
+### Gray Urban Blocks Appeared on the Map
+
+The GHSL urban mask was temporarily added as a visible map layer, which produced gray blocks over urban areas.
+
+**Fix:** Keep the urban mask only for `updateMask()` and do not add it with `Map.addLayer()`.
+
+## Current Result
+
+The current Version 2.0 produces a county-wide road map with a simple visual hierarchy.
+
+At the county level, highways and arterial roads stand out clearly. When zooming into developed areas, smaller city streets become visible without filling rural portions of Monterey County with unnecessary road detail.
+
+The map also has a cleaner appearance because the basemap does not compete with the road data.
+
+## Limitations
+
+The current project has a few limitations.
+
+### GHSL Is Not a City Boundary
+
+The GHSL mask identifies developed urban areas. It does not represent official incorporated city boundaries.
+
+That means the urban street layer may also include developed areas outside formal city limits.
+
+### TIGER Road Data Is Older
+
+The road network comes from the 2016 TIGER road dataset available in Earth Engine.
+
+Newer streets, renamed roads, or recent road changes may not appear.
+
+### Road Classification Is Generalized
+
+`MTFCC` and `RTTYP` are useful for creating broad road classes, but they do not always match how local agencies classify roads.
+
+A road that is locally considered a major city street may still appear as `S1400` in TIGER.
+
+## Possible Future Improvements
+
+Future versions could include:
+
+- Official incorporated city boundaries.
+- City name labels.
+- Road labels for major roads only.
+- Separate symbology for freeways and other U.S. highways.
+- Filtering city streets based on road importance rather than only settlement location.
+- Updated road data from a local or state transportation source.
+- Exporting the final map for use in reports or GIS software.
+- Adding Monterey County cities as separate selectable layers.
+- Comparing the TIGER network with OpenStreetMap or local GIS road data.
+
+## Summary
+
+The main workflow is:
+
+**Load → Filter → Classify → Mask → Style → Clip → Display**
+
+The project starts with national Census datasets, filters them to Monterey County, separates roads by classification, uses GHSL to limit smaller streets to developed areas, applies different colors and widths, clips the final layers to the county, and displays them on a custom light gray basemap.
+
+The result is a cleaner road network map that shows enough detail to be useful without turning the county into a wall of road lines.
